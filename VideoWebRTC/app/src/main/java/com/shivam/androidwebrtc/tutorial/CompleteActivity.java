@@ -306,7 +306,9 @@ public class CompleteActivity extends AppCompatActivity {
     }
 
     private void cleanup() {
-        peerConnection.close();
+        // This causes a native crash if you menu out of CompleteActivity, then rejoin the room
+        // then have the other client leave and then have the other client rejoin
+        // peerConnection.close();
         isInitiator = true;
         isStarted = false;
     }
