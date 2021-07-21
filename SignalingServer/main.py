@@ -29,11 +29,19 @@ async def message(data):
 async def on_message(data):
     print("Received on_message", data)
     if data == "got user media":
-        print("INITIATING!")
-        await createPeerConnection()
+        await createOffer()
     if data and "type" in data and data["type"] == "offer":
-        # await createPeerConnection(data)
-        print("OFFER NOT CREATING")
+        await pc.setRemoteDescription(
+            RTCSessionDescription(
+                sdp=data["sdp"], type=data["type"]
+            )
+        )
+        localDesc = await pc.createAnswer()
+        await pc.setLocalDescription(localDesc)
+        await sendMessage({
+            "sdp": localDesc.sdp,
+            "type": localDesc.type
+        })
     elif data and "type" in data and data["type"] == "answer":
         await pc.setRemoteDescription(
             RTCSessionDescription(
@@ -64,20 +72,11 @@ def add_player(pc, player):
 isInitiator = False
 async def createPeerConnection():
     global pc
+    if pc:
+        raise Exception("RTCPeerConnection alread established")
+
     pc = RTCPeerConnection()
 
-    '''
-    iceServers = [
-        RTCIceServer(urls="stun:stun.l.google.com:19302")
-    ]
-    gatherer = RTCIceGatherer(iceServers)
-    await gatherer.gather()
-    print("LOCAL CANDIDATES:", gatherer.getLocalCandidates())
-    '''
-
-    filename = "/home/samuel/Downloads/examples_server_demo-instruct.wav"
-    player = MediaPlayer(filename)
-    #add_player(pc, player)
     player = MediaPlayer('/dev/video0', format='v4l2', options={
         'video_size': '320x240'
     })
@@ -87,23 +86,20 @@ async def createPeerConnection():
     async def on_track(track):
         print("Received track", track)
 
-
-
-    #transceiver = pc.addTransceiver("recvonly")
-
-    #pc.addTrack(VideoStreamTrack())
-
     print("Created peer")
 
-    if isInitiator:
-        print("IS INITIATOR!!!!!")
-        desc = await pc.createOffer()
-        print("Created local description:", desc)
-        await pc.setLocalDescription(desc)
-        await sendMessage({
-            "sdp": desc.sdp,
-            "type": desc.type
-        })
+async def createOffer():
+    if not isInitiator:
+        raise Exception("Should createOffer only when the initiator")
+
+    print("isInitiator: creating offer")
+    desc = await pc.createOffer()
+    print("Created local description")
+    await pc.setLocalDescription(desc)
+    await sendMessage({
+        "sdp": desc.sdp,
+        "type": desc.type
+    })
 
 @sio.on("created")
 async def on_created(data, *args):
@@ -136,6 +132,7 @@ async def main():
     print("My sid:", sio.sid)
     room = "foo"
     await sio.emit("create or join", room)
+    await createPeerConnection()
     await sendMessage("got user media")
     await sio.wait()
 
