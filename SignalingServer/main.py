@@ -70,12 +70,19 @@ def add_player(pc, player):
         pc.addTrack(player.video)
 
 isInitiator = False
+player = None
 async def createPeerConnection():
     global pc
+    global player
     if pc:
         raise Exception("RTCPeerConnection alread established")
 
     pc = RTCPeerConnection()
+    if player:
+        if player.video:
+            player.video.stop()
+        if player.audio:
+            player.audio.stop()
 
     player = MediaPlayer('/dev/video0', format='v4l2', options={
         'video_size': '320x240'
@@ -101,11 +108,25 @@ async def createOffer():
         "type": desc.type
     })
 
+async def cleanup():
+    global pc
+    await pc.close()
+    pc = None
+
 @sio.on("created")
 async def on_created(data, *args):
     global isInitiator
     print("Received on_created", data, args)
     isInitiator = True
+
+@sio.on("isinitiator")
+async def on_isinitiator(room):
+    global isInitiator
+    global pc
+    print("Received isInitiator", room)
+    isInitiator = True
+    await cleanup()
+    await createPeerConnection()
 
 @sio.on("full")
 async def on_full(data):
@@ -124,9 +145,6 @@ async def on_log(data):
     print("Received on_log", data)
 
 
-
-
-
 async def main():
     await sio.connect("http://192.168.1.220:3000")
     print("My sid:", sio.sid)
@@ -136,13 +154,21 @@ async def main():
     await sendMessage("got user media")
     await sio.wait()
 
+async def close():
+    await asyncio.sleep(0.1)
+
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(
             main()
         )
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as e:
         print("Keyboard Interrupt")
     finally:
+        print("Cleaning up")
+        loop.run_until_complete(
+            close()
+        )
+
         print("Exiting")

@@ -1,6 +1,8 @@
 package com.shivam.androidwebrtc.tutorial;
 
 import android.Manifest;
+
+import androidx.appcompat.app.ActionBar;
 import androidx.databinding.DataBindingUtil;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
@@ -83,6 +85,9 @@ public class CompleteActivity extends AppCompatActivity {
         binding = DataBindingUtil.setContentView(this, R.layout.activity_sample_peer_connection);
         setSupportActionBar(binding.toolbar);
 
+        ActionBar ab = getSupportActionBar();
+        ab.setDisplayHomeAsUpEnabled(true);
+
         start();
     }
 
@@ -125,7 +130,7 @@ public class CompleteActivity extends AppCompatActivity {
         try {
             // For me this was "http://192.168.1.220:3000";
             // $ hostname -I
-            String URL = "https://calm-badlands-59575.herokuapp.com/";
+            String URL = "http://192.168.1.220:3000";
             Log.e(TAG, "REPLACE ME: IO Socket:" + URL);
             socket = IO.socket(URL);
 
@@ -137,6 +142,10 @@ public class CompleteActivity extends AppCompatActivity {
             }).on("created", args -> {
                 Log.d(TAG, "connectToSignallingServer: created");
                 isInitiator = true;
+            }).on("isinitiator", args -> {
+                Log.d(TAG, "isinitiator");
+                cleanup();
+                initializePeerConnections();
             }).on("full", args -> {
                 Log.d(TAG, "connectToSignallingServer: full");
             }).on("join", args -> {
@@ -296,6 +305,12 @@ public class CompleteActivity extends AppCompatActivity {
         sendMessage("got user media");
     }
 
+    private void cleanup() {
+        peerConnection.close();
+        isInitiator = true;
+        isStarted = false;
+    }
+
     private PeerConnection createPeerConnection(PeerConnectionFactory factory) {
         ArrayList<PeerConnection.IceServer> iceServers = new ArrayList<>();
         String URL = "stun:stun.l.google.com:19302";
@@ -352,8 +367,8 @@ public class CompleteActivity extends AppCompatActivity {
             public void onAddStream(MediaStream mediaStream) {
                 Log.d(TAG, "onAddStream: " + mediaStream.videoTracks.size());
                 VideoTrack remoteVideoTrack = mediaStream.videoTracks.get(0);
-                AudioTrack remoteAudioTrack = mediaStream.audioTracks.get(0);
-                remoteAudioTrack.setEnabled(true);
+                //AudioTrack remoteAudioTrack = mediaStream.audioTracks.get(0);
+                //remoteAudioTrack.setEnabled(true);
                 remoteVideoTrack.setEnabled(true);
                 remoteVideoTrack.addRenderer(new VideoRenderer(binding.surfaceView2));
 
