@@ -120,7 +120,8 @@ public class CompleteActivity extends AppCompatActivity {
 
             initializePeerConnections();
 
-            startStreamingVideo();
+            //startStreamingVideo();
+            sendMessage("got user media");
         } else {
             EasyPermissions.requestPermissions(this, "Need some permissions", RC_CALL, perms);
         }
@@ -178,6 +179,7 @@ public class CompleteActivity extends AppCompatActivity {
                                 maybeStart();
                             }
                             peerConnection.setRemoteDescription(new SimpleSdpObserver(), new SessionDescription(OFFER, message.getString("sdp")));
+                            startStreamingVideo();
                             doAnswer();
                         } else if (message.getString("type").equals("answer") && isStarted) {
                             peerConnection.setRemoteDescription(new SimpleSdpObserver(), new SessionDescription(ANSWER, message.getString("sdp")));
@@ -230,6 +232,7 @@ public class CompleteActivity extends AppCompatActivity {
     }
 
     private void doCall() {
+        startStreamingVideo();
         MediaConstraints sdpMediaConstraints = new MediaConstraints();
 
         sdpMediaConstraints.mandatory.add(
@@ -301,8 +304,6 @@ public class CompleteActivity extends AppCompatActivity {
         mediaStream.addTrack(videoTrackFromCamera);
         mediaStream.addTrack(localAudioTrack);
         peerConnection.addStream(mediaStream);
-
-        sendMessage("got user media");
     }
 
     private void cleanup() {
@@ -329,7 +330,7 @@ public class CompleteActivity extends AppCompatActivity {
 
             @Override
             public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
-                Log.d(TAG, "onIceConnectionChange: ");
+                Log.d(TAG, "onIceConnectionChange: " + iceConnectionState.name());
             }
 
             @Override

@@ -4,6 +4,7 @@ import asyncio
 import socketio
 
 import aiohttp
+import cv2
 
 from aiortc import RTCPeerConnection,\
     RTCSessionDescription,\
@@ -11,15 +12,39 @@ from aiortc import RTCPeerConnection,\
     RTCIceCandidate,\
     RTCIceGatherer,\
     RTCIceServer,\
-    sdp
+    sdp,\
+    MediaStreamTrack
 from aiortc.contrib.media import MediaPlayer, MediaRecorder
 
 sio = socketio.AsyncClient()
 
 pc = None
 
+class ListenerTrack(MediaStreamTrack):
+    kind = "video"
+    def __init__(self, track):
+        super().__init__()
+        self.track = track
+
+    async def recv(self):
+        frame = await self.track.recv()
+        print("Got frame:", frame)
+        return frame
+
+
 async def sendMessage(msg):
     await sio.emit("message", msg)
+
+async def printReceivers():
+    print("Printing!")
+    receivers = pc.getReceivers()
+    for receiver in receivers:
+        print("Receiver:", receiver, " track:", receiver.track)
+    transceivers = pc.getTransceivers()
+    for transceiver in transceivers:
+        print("Transceiver:", transceiver, " receiver", transceiver.receiver)
+        if transceiver.receiver:
+            print("Has track:", transceiver.receiver.track)
 
 @sio.event
 async def message(data):
@@ -36,6 +61,8 @@ async def on_message(data):
                 sdp=data["sdp"], type=data["type"]
             )
         )
+        await printReceivers()
+        await addTracks()
         localDesc = await pc.createAnswer()
         await pc.setLocalDescription(localDesc)
         await sendMessage({
@@ -48,6 +75,7 @@ async def on_message(data):
                 sdp=data["sdp"], type=data["type"]
             )
         )
+        await printReceivers()
     elif data and "type" in data and data["type"] == "candidate":
         print("Got candidate:", data)
         can = sdp.candidate_from_sdp(data["candidate"])
@@ -78,6 +106,34 @@ async def createPeerConnection():
         raise Exception("RTCPeerConnection alread established")
 
     pc = RTCPeerConnection()
+
+    @pc.on("track")
+    async def on_track(track):
+        print("Received track!!!!!!!!!!!!!!!!!!!!", track.kind)
+        if track.kind == "audio":
+            while True:
+                try:
+                    frame = await track.recv()
+                    print("Audio:", frame)
+                except:
+                    print("Error receiving audio")
+
+        if track.kind == "video":
+            while True:
+                try:
+                    frame = await track.recv()
+                    img = frame.to_image()
+                    print("FRAME2:", frame, img)
+                    #img.show("Test")
+                except:
+                    print("Error receiving track")
+
+    @pc.on("connectionstatechange")
+    def on_connectionstatechange():
+        print("connectionstatechange:", pc.connectionState)
+
+async def addTracks():
+    global player
     if player:
         if player.video:
             player.video.stop()
@@ -89,16 +145,21 @@ async def createPeerConnection():
     })
     add_player(pc, player)
 
-    @pc.on("track")
-    async def on_track(track):
-        print("Received track", track)
+    receivers = pc.getReceivers()
+    print("Receivers:", len(receivers))
+    if len(receivers) == 1:
+        receiver = receivers[0]
+        print("Receiver:", receiver, receiver.track)
+
 
     print("Created peer")
 
 async def createOffer():
     if not isInitiator:
-        raise Exception("Should createOffer only when the initiator")
+        return
+        # raise Exception("Should createOffer only when the initiator")
 
+    await addTracks()
     print("isInitiator: creating offer")
     desc = await pc.createOffer()
     print("Created local description")
