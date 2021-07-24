@@ -16,6 +16,21 @@ from aiortc import RTCPeerConnection,\
     MediaStreamTrack
 from aiortc.contrib.media import MediaPlayer, MediaRecorder
 
+import abilities
+
+import numba
+from numba import cuda
+import numpy as np
+import time
+from mpi4py import MPI
+
+import matplotlib.pyplot as plt
+
+a = np.random.randn(4,4)
+a = a.astype(np.float32)
+a_gpu = cuda.to_device(a)
+print(a_gpu)
+
 sio = socketio.AsyncClient()
 
 pc = None
@@ -111,6 +126,8 @@ async def createPeerConnection():
     async def on_track(track):
         print("Received track!!!!!!!!!!!!!!!!!!!!", track.kind)
         if track.kind == "audio":
+            pc.addTrack(track)
+            return
             while True:
                 try:
                     frame = await track.recv()
@@ -121,12 +138,23 @@ async def createPeerConnection():
         if track.kind == "video":
             while True:
                 try:
+                    t1 = time.time()
                     frame = await track.recv()
-                    img = frame.to_image()
-                    print("FRAME2:", frame, img)
+                    t2 = time.time()
+                    img = frame.to_rgb().to_ndarray()
+                    t3 = time.time()
+                    #print("FRAME2:", frame, img)
+                    img_gpu = cuda.to_device(img)
+                    t4 = time.time()
+                    MPI.COMM_WORLD.send(img_gpu.get_ipc_handle(), dest=1)
+                    t5 = time.time()
+                    print("Recv:", t2 - t1, " to_ndarray", t3 - t2,
+                        " to_device:", t4 - t3,
+                        " send:", t5-t4)
+
                     #img.show("Test")
-                except:
-                    print("Error receiving track")
+                except Exception as e:
+                    print("Error receiving track", e)
 
     @pc.on("connectionstatechange")
     def on_connectionstatechange():
@@ -206,7 +234,13 @@ async def on_log(data):
     print("Received on_log", data)
 
 
-async def main():
+async def main(brain):
+    @brain.on("audio")
+    def output_audio(frame):
+        print("Output audio:", frame)
+
+    brain.receiveAudioFrame([123])
+
     await sio.connect("http://192.168.1.220:3000")
     print("My sid:", sio.sid)
     room = "foo"
@@ -218,11 +252,12 @@ async def main():
 async def close():
     await asyncio.sleep(0.1)
 
-if __name__ == "__main__":
+def rank0():
     loop = asyncio.get_event_loop()
+    brain = abilities.BrainRunner(loop)
     try:
         loop.run_until_complete(
-            main()
+            main(brain)
         )
     except KeyboardInterrupt as e:
         print("Keyboard Interrupt")
@@ -233,3 +268,26 @@ if __name__ == "__main__":
         )
 
         print("Exiting")
+
+
+# mpirun -np 2 python3 main.py
+if __name__ == "__main__":
+    rank = MPI.COMM_WORLD.Get_rank()
+    if rank == 0:
+        rank0()
+    elif rank == 1:
+        didShow = False
+        while True:
+            t1 = time.time()
+            handle = MPI.COMM_WORLD.recv(source=0)
+            try:
+                t2 = time.time()
+                gpu_input = handle.open().copy_to_host()
+                if not didShow:
+                    cv2.imshow("test", gpu_input)
+                    didShow = False
+                    cv2.waitKey(5)
+                t3 = time.time()
+                print("Rank 1: recv:", t2-t1, " open:", t3-t2, flush=True)
+            except Exception as e:
+                print("Rank 1: Failed to handle", e)

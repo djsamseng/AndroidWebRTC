@@ -370,8 +370,14 @@ public class CompleteActivity extends AppCompatActivity {
             public void onAddStream(MediaStream mediaStream) {
                 Log.d(TAG, "onAddStream: " + mediaStream.videoTracks.size());
                 VideoTrack remoteVideoTrack = mediaStream.videoTracks.get(0);
-                //AudioTrack remoteAudioTrack = mediaStream.audioTracks.get(0);
-                //remoteAudioTrack.setEnabled(true);
+                if (mediaStream.audioTracks.size() > 0) {
+                    AudioTrack remoteAudioTrack = mediaStream.audioTracks.get(0);
+                    remoteAudioTrack.setEnabled(true);
+                }
+                else {
+                    Log.w(TAG, "No remote audio tracks");
+                }
+
                 remoteVideoTrack.setEnabled(true);
                 remoteVideoTrack.addRenderer(new VideoRenderer(binding.surfaceView2));
 
