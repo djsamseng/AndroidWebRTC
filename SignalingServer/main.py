@@ -6,6 +6,7 @@ import socketio
 import aiohttp
 import cv2
 
+import av
 from aiortc import RTCPeerConnection,\
     RTCSessionDescription,\
     VideoStreamTrack,\
@@ -21,45 +22,59 @@ import abilities
 import numba
 from numba import cuda
 import numpy as np
+import os
 import time
 from mpi4py import MPI
 
 import matplotlib.pyplot as plt
 
-a = np.random.randn(4,4)
-a = a.astype(np.float32)
-a_gpu = cuda.to_device(a)
-print(a_gpu)
+import pyaudio
 
 sio = socketio.AsyncClient()
 
+## GLOBALS
 pc = None
+isInitiator = False
+player = None
+p_stream = None
+audio_replay_track = None
 
-class ListenerTrack(MediaStreamTrack):
-    kind = "video"
-    def __init__(self, track):
+class AudioReplayTrack(MediaStreamTrack):
+    kind = "audio"
+    def __init__(self):
         super().__init__()
-        self.track = track
+        self.dataQueue = asyncio.Queue()
+        self.itr = 0
 
     async def recv(self):
-        frame = await self.track.recv()
-        print("Got frame:", frame)
-        return frame
+        try:
+            data = await self.dataQueue.get()
+            audio_array = np.zeros((1, 1920), dtype='int16')
+            audio_array[:,:] = data["data"][:,:]
+
+            frame = av.AudioFrame.from_ndarray(audio_array, 's16')
+            frame.sample_rate = 48000
+            frame.time_base = '1/48000'
+            frame.pts = data["pts"]
+            self.itr += 960 # TODO: Correctly increment base
+
+            return frame
+        except Exception as e:
+            print("AudioReplayTrack recv was called with Exception:", e)
+
+    def addFrame(self, frame):
+        self.dataQueue.put_nowait(frame)
+
+    def stop(self):
+        try:
+            super().stop()
+            print("AudioReplayTrack stop was called")
+        except Exception as e:
+            print("AudioReplayTrack stop was called with exception:", e)
 
 
 async def sendMessage(msg):
     await sio.emit("message", msg)
-
-async def printReceivers():
-    print("Printing!")
-    receivers = pc.getReceivers()
-    for receiver in receivers:
-        print("Receiver:", receiver, " track:", receiver.track)
-    transceivers = pc.getTransceivers()
-    for transceiver in transceivers:
-        print("Transceiver:", transceiver, " receiver", transceiver.receiver)
-        if transceiver.receiver:
-            print("Has track:", transceiver.receiver.track)
 
 @sio.event
 async def message(data):
@@ -76,7 +91,6 @@ async def on_message(data):
                 sdp=data["sdp"], type=data["type"]
             )
         )
-        await printReceivers()
         await addTracks()
         localDesc = await pc.createAnswer()
         await pc.setLocalDescription(localDesc)
@@ -90,7 +104,6 @@ async def on_message(data):
                 sdp=data["sdp"], type=data["type"]
             )
         )
-        await printReceivers()
     elif data and "type" in data and data["type"] == "candidate":
         print("Got candidate:", data)
         can = sdp.candidate_from_sdp(data["candidate"])
@@ -112,11 +125,10 @@ def add_player(pc, player):
         print("Adding video")
         pc.addTrack(player.video)
 
-isInitiator = False
-player = None
 async def createPeerConnection():
     global pc
-    global player
+    p = pyaudio.PyAudio()
+    p_stream = None
     if pc:
         raise Exception("RTCPeerConnection alread established")
 
@@ -124,16 +136,32 @@ async def createPeerConnection():
 
     @pc.on("track")
     async def on_track(track):
-        print("Received track!!!!!!!!!!!!!!!!!!!!", track.kind)
+        global p_stream
+        print("Received track:", track.kind)
         if track.kind == "audio":
-            pc.addTrack(track)
-            return
             while True:
                 try:
                     frame = await track.recv()
-                    print("Audio:", frame)
-                except:
-                    print("Error receiving audio")
+
+                    if not p_stream:
+                        assert frame.format.bits == 16
+                        assert frame.sample_rate == 48000
+                        assert frame.layout.name == "stereo"
+                        p_stream = p.open(format=pyaudio.paInt16,
+                            channels=2,
+                            rate=48000,
+                            output=True)
+
+                    as_np = frame.to_ndarray()
+                    audio_replay_track.addFrame({
+                        "data": as_np,
+                        "pts": frame.pts
+                    })
+                    as_np = as_np.astype(np.int16).tostring()
+                    p_stream.write(as_np)
+
+                except Exception as e:
+                    print("Error receiving audio:", e)
 
         if track.kind == "video":
             while True:
@@ -143,16 +171,13 @@ async def createPeerConnection():
                     t2 = time.time()
                     img = frame.to_rgb().to_ndarray()
                     t3 = time.time()
-                    #print("FRAME2:", frame, img)
                     img_gpu = cuda.to_device(img)
                     t4 = time.time()
                     MPI.COMM_WORLD.send(img_gpu.get_ipc_handle(), dest=1)
                     t5 = time.time()
-                    print("Recv:", t2 - t1, " to_ndarray", t3 - t2,
-                        " to_device:", t4 - t3,
-                        " send:", t5-t4)
-
-                    #img.show("Test")
+                    #print("Recv:", t2 - t1, " to_ndarray", t3 - t2,
+                    #    " to_device:", t4 - t3,
+                    #    " send:", t5-t4)
                 except Exception as e:
                     print("Error receiving track", e)
 
@@ -162,6 +187,7 @@ async def createPeerConnection():
 
 async def addTracks():
     global player
+    global audio_replay_track
     if player:
         if player.video:
             player.video.stop()
@@ -173,12 +199,8 @@ async def addTracks():
     })
     add_player(pc, player)
 
-    receivers = pc.getReceivers()
-    print("Receivers:", len(receivers))
-    if len(receivers) == 1:
-        receiver = receivers[0]
-        print("Receiver:", receiver, receiver.track)
-
+    audio_replay_track = AudioReplayTrack()
+    pc.addTrack(audio_replay_track)
 
     print("Created peer")
 
@@ -283,11 +305,9 @@ if __name__ == "__main__":
             try:
                 t2 = time.time()
                 gpu_input = handle.open().copy_to_host()
-                if not didShow:
-                    cv2.imshow("test", gpu_input)
-                    didShow = False
-                    cv2.waitKey(5)
+                cv2.imshow("test", gpu_input)
+                cv2.waitKey(5)
                 t3 = time.time()
-                print("Rank 1: recv:", t2-t1, " open:", t3-t2, flush=True)
+                #print("Rank 1: recv:", t2-t1, " open:", t3-t2, flush=True)
             except Exception as e:
                 print("Rank 1: Failed to handle", e)

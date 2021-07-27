@@ -2,8 +2,13 @@ package com.shivam.androidwebrtc.tutorial;
 
 import android.Manifest;
 
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.ActionBar;
 import androidx.databinding.DataBindingUtil;
+
+import android.content.Context;
+import android.media.AudioManager;
+import android.os.Build;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -67,6 +72,7 @@ public class CompleteActivity extends AppCompatActivity {
     VideoSource videoSource;
     VideoTrack localVideoTrack;
     AudioSource audioSource;
+    AudioManager audioManager;
     AudioTrack localAudioTrack;
     SurfaceTextureHelper surfaceTextureHelper;
 
@@ -78,7 +84,7 @@ public class CompleteActivity extends AppCompatActivity {
 
     //Firestore
     FirebaseFirestore db = FirebaseFirestore.getInstance();
-
+    
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -87,6 +93,9 @@ public class CompleteActivity extends AppCompatActivity {
 
         ActionBar ab = getSupportActionBar();
         ab.setDisplayHomeAsUpEnabled(true);
+
+        audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
+        audioManager.setSpeakerphoneOn(true);
 
         start();
     }
@@ -369,18 +378,24 @@ public class CompleteActivity extends AppCompatActivity {
             @Override
             public void onAddStream(MediaStream mediaStream) {
                 Log.d(TAG, "onAddStream: " + mediaStream.videoTracks.size());
-                VideoTrack remoteVideoTrack = mediaStream.videoTracks.get(0);
+                if (mediaStream.videoTracks.size() > 0) {
+                    VideoTrack remoteVideoTrack = mediaStream.videoTracks.get(0);
+                    remoteVideoTrack.setEnabled(true);
+                    remoteVideoTrack.addRenderer(new VideoRenderer(binding.surfaceView2));
+                }
+                else {
+                    Log.w(TAG, "No remote video tracks");
+                }
+
                 if (mediaStream.audioTracks.size() > 0) {
                     AudioTrack remoteAudioTrack = mediaStream.audioTracks.get(0);
                     remoteAudioTrack.setEnabled(true);
+
+                    audioManager.playSoundEffect(0);
                 }
                 else {
                     Log.w(TAG, "No remote audio tracks");
                 }
-
-                remoteVideoTrack.setEnabled(true);
-                remoteVideoTrack.addRenderer(new VideoRenderer(binding.surfaceView2));
-
             }
 
             @Override
